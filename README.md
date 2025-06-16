@@ -5,3 +5,10 @@
 
 # 4d-plugin-maddy
 MD to HTML parser based on [maddy](https://github.com/progsource/maddy)
+
+## Examples
+
+```4d
+$md:="# Some **test** markdown"
+$html:=maddy($md)
+```
