@@ -6,6 +6,13 @@
 # 4d-plugin-maddy
 MD to HTML parser based on [maddy](https://github.com/progsource/maddy)
 
+## Related Projects
+
+|repository|downloads|
+|:-|:-:|
+|[4d-plugin-cpp-markdown](https://github.com/miyako/4d-plugin-cpp-markdown) |![downloads](https://img.shields.io/github/downloads/miyako/4d-plugin-cpp-markdown/total)|
+|[4d-plugin-discount](https://github.com/miyako/4d-plugin-discount) |![downloads](https://img.shields.io/github/downloads/miyako/4d-plugin-discount/total)|
+
 ## Examples
 
 ```4d
