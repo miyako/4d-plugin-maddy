@@ -1,0 +1,11 @@
+{
+    "name": "maddy",
+    "id": 20000,
+    "commands": [
+        {
+            "theme": "maddy",
+            "syntax": "maddy(&T;&J):T",
+            "threadSafe": true
+        }
+    ]
+}
