@@ -6,7 +6,7 @@
 # 4d-plugin-maddy
 MD to HTML parser based on [maddy](https://github.com/progsource/maddy)
 
-## Related Projects
+## Similar Projects
 
 |repository|downloads|
 |:-|:-:|
