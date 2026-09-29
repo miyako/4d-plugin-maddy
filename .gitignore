@@ -5,3 +5,4 @@ maddy/.vs/*
 maddy/Objs/*
 maddy/test/Plugins/maddy.bundle/Contents/Windows64/maddy.exp
 maddy/test/Plugins/maddy.bundle/Contents/Windows64/maddy.lib
+build/*
