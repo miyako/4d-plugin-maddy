@@ -221,9 +221,8 @@ def publish(api, tag, sha, assets):
             "target_commitish": sha,
             "draft": False,
             "prerelease": False,
-            "generate_release_notes": True,
-            "body": f"Release {tag}, built from commit `{sha}`.\n\n"
-                    "The attached archives contain the release build for this commit.",
+            "generate_release_notes": False,
+            "body": "",
         })
         if isinstance(release, dict) and numeric_id(release.get("id")):
             release_id = release["id"]

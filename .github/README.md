@@ -99,12 +99,17 @@ Publication uses separate create-only operations:
 
 1. POST a new `refs/tags/vX.Y.Z` at the selected SHA, then remotely verify it.
 2. POST a new public, non-prerelease release with explicit tag, name, target,
-   body, and generated release notes.
+   empty body, and generated release notes explicitly disabled.
 3. Upload each exact asset separately to the newly returned release ID.
 
 The only accepted asset arguments, in order, are `maddy-X.Y.Z.zip` and
 `maddy-X.Y.Z.dmg` for the selected version: unqualified, regular, nonempty files.
 Absolute/directory aliases, symlinks, extra files, and reversed order fail closed.
+
+The original committed workflow supplied only `tag_name`, `name`, and `files`
+to `softprops/action-gh-release`, with no body or generated-notes option.
+Publication preserves that notes policy: `body` is empty and
+`generate_release_notes` is false. No commit/archive prose is inserted.
 
 There is no reuse, PATCH/update, delete, clobber, retry, rollback, or combined
 release-and-assets operation. The final check does not claim atomicity across

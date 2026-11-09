@@ -177,13 +177,11 @@ class PublishTests(unittest.TestCase):
                                            {"ref": "refs/tags/" + TAG, "sha": SHA}))
         self.assertEqual(api.calls[3][1], f"{BASE}/git/ref/tags/{TAG}")
         body = api.calls[4][2]
-        self.assertEqual(body["target_commitish"], SHA)
-        self.assertEqual(body["tag_name"], TAG)
-        self.assertEqual(body["name"], TAG)
-        self.assertIs(body["draft"], False)
-        self.assertIs(body["prerelease"], False)
-        self.assertIs(body["generate_release_notes"], True)
-        self.assertIn(SHA, body["body"])
+        self.assertEqual(body, {
+            "target_commitish": SHA, "tag_name": TAG, "name": TAG,
+            "draft": False, "prerelease": False,
+            "generate_release_notes": False, "body": "",
+        })
         self.assertEqual(api.calls[5][1], UPLOAD + "?name=maddy-1.2.3.zip")
         self.assertEqual(api.calls[6][1], UPLOAD + "?name=maddy-1.2.3.dmg")
         self.assertEqual([c[3] for c in api.calls[5:]], self.assets)
@@ -499,8 +497,11 @@ elif (method, endpoint) == ("POST", base + "/git/refs"):
 elif (method, endpoint) == ("GET", base + "/git/ref/tags/" + tag):
     result = ref
 elif (method, endpoint) == ("POST", base + "/releases"):
-    assert payload["target_commitish"] == sha, payload
-    assert payload["generate_release_notes"] is True, payload
+    assert payload == {
+        "target_commitish": sha, "tag_name": tag, "name": tag,
+        "draft": False, "prerelease": False,
+        "generate_release_notes": False, "body": "",
+    }, payload
     result = {**payload, "id": 123, "upload_url": uploads + "{?name,label}"}
 elif method == "POST" and endpoint.startswith(uploads + "?name="):
     assert args[-2] == "--input", args
