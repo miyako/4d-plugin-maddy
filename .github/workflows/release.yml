@@ -1,39 +1,22 @@
-# Builds the plugin for Windows (x64) first, then macOS as a universal
-# (arm64 + x86_64) binary, merges both into the single cross-platform
-# .bundle, codesigns + notarizes the mac binary, and publishes a GitHub
-# Release with the zip and dmg attached.
-#
-# NOTE: /test/ path is intentional and static for this project.
-# PORTABILITY: Edit only PRODUCT_NAME below. Everything else derives from it.
-# Canonical layout enforced:
-#   test/Plugins/<Product>.bundle/Contents/MacOS/<Product>
-#   test/Plugins/<Product>.bundle/Contents/Windows64/<Product>.4DX
+# Build the selected source SHA without bumping it. Windows precedes macOS;
+# publish only after signing, strict verification, both notarizations and staple.
+# The actual projects use test/Plugins, not a .4dbase directory.
 
-name: Build & Release
+name: Build
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing tag to build (e.g. v2.3.0)
-        required: true
 
 permissions:
   contents: write
 
 env:
-  # ---- only this needs editing per-project ----
   PRODUCT_NAME: maddy
   MACOS_DEPLOYMENT_TARGET: '10.13'
-  # static base for this project (intentional)
   BASE_DIR: test
-  # ---------------------------------------------
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -44,11 +27,25 @@ jobs:
       tag: ${{ steps.set.outputs.tag }}
       version: ${{ steps.set.outputs.version }}
     steps:
-      - id: set
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: read selected source version
+        id: set
+        shell: bash
         run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          python3 .github/scripts/version.py read --github-output "$GITHUB_OUTPUT"
+
+      - name: reject existing release or tag
+        shell: bash
+        env:
+          TAG: ${{ steps.set.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release.py check --tag "$TAG"
 
   build-windows:
     name: Build Windows (x64)
@@ -57,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ github.sha }}
 
       - name: setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -65,46 +62,53 @@ jobs:
       - name: clean stale outputs
         shell: pwsh
         run: |
-          $product = "${{ env.PRODUCT_NAME }}"
-          $base = "${{ env.BASE_DIR }}"
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$base/Plugins/$product.bundle"
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$base/plugins"
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$base/Plugins/Default"
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "Objs"
+          $ErrorActionPreference = 'Stop'
+          $product = $env:PRODUCT_NAME
+          $base = $env:BASE_DIR
+          $generated = @(
+            "$base/plugins/$product.bundle/contents/windows64/$product.4DX",
+            "Objs/Release"
+          )
+          foreach ($path in $generated) {
+            if (Test-Path -LiteralPath $path) {
+              Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+            }
+          }
 
       - name: build x64
-        shell: cmd
+        shell: pwsh
         run: |
-          msbuild "%PRODUCT_NAME%.sln" /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /m
+          $ErrorActionPreference = 'Stop'
+          msbuild "$env:PRODUCT_NAME.sln" /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /m
+          if ($LASTEXITCODE -ne 0) {
+            throw "MSBuild failed with exit code $LASTEXITCODE"
+          }
 
       - name: normalize windows output to canonical case
         shell: pwsh
         run: |
-          $product = "${{ env.PRODUCT_NAME }}"
-          $base = "${{ env.BASE_DIR }}"
+          $ErrorActionPreference = 'Stop'
+          $product = $env:PRODUCT_NAME
+          $base = $env:BASE_DIR
+          $source = "$base/plugins/$product.bundle/contents/windows64/$product.4DX"
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "Expected Windows output not found: $source"
+          }
+          if ((Get-Item -LiteralPath $source).Length -le 0) {
+            throw "Windows output is empty: $source"
+          }
           $canonicalDir = "$base/Plugins/$product.bundle/Contents/Windows64"
           New-Item -ItemType Directory -Force -Path $canonicalDir | Out-Null
 
-          $found = Get-ChildItem -Recurse -Filter "$product.4DX" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*Plugins*" } | Select-Object -First 1
-          if (-not $found) {
-            Get-ChildItem -Recurse -Filter "*.4DX" | ForEach-Object { Write-Host $_.FullName }
-            Write-Error "Windows binary $product.4DX not found after build"
-            exit 1
-          }
-          Write-Host "Found at: $($found.FullName)"
-
           $destination = Join-Path $canonicalDir "$product.4DX"
-          $sourceResolved = (Resolve-Path $found.FullName).Path
-          $destResolved = (Resolve-Path $destination -ErrorAction SilentlyContinue).Path
-
-          if ($destResolved -and ($sourceResolved -ieq $destResolved)) {
-            # Windows is case-insensitive: MSBuild's OutDir (lowercase, per
-            # the .vcxproj) and this step's canonical path already point at
-            # the identical physical file. Copy-Item correctly refuses to
-            # "overwrite" a file with itself - there's nothing left to do.
-            Write-Host "Already at canonical location (case-insensitive match) - skipping copy."
-          } else {
-            Copy-Item $found.FullName $destination -Force
+          $sourceResolved = (Resolve-Path -LiteralPath $source).Path
+          $destResolved = $null
+          if (Test-Path -LiteralPath $destination) {
+            $destResolved = (Resolve-Path -LiteralPath $destination).Path
+          }
+          # MSBuild and the canonical path identify the same file on Windows.
+          if (-not $destResolved -or ($sourceResolved -ine $destResolved)) {
+            Copy-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop
           }
           Get-ChildItem $canonicalDir
 
@@ -122,7 +126,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ github.sha }}
 
       - name: download windows binaries
         uses: actions/download-artifact@v4
@@ -131,6 +135,7 @@ jobs:
           path: winbuild
 
       - name: import Developer ID certificate
+        shell: bash
         env:
           CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE }}
           CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
@@ -152,11 +157,13 @@ jobs:
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
       - name: store notarytool credentials
+        shell: bash
         env:
           APPLE_ID: ${{ secrets.NOTARYTOOL_APPLE_ID }}
           TEAM_ID: ${{ secrets.NOTARYTOOL_TEAM_ID }}
           APP_PASSWORD: ${{ secrets.NOTARYTOOL_PASSWORD }}
         run: |
+          set -euo pipefail
           xcrun notarytool store-credentials "notarytool-profile" \
             --apple-id "$APPLE_ID" \
             --team-id "$TEAM_ID" \
@@ -164,19 +171,24 @@ jobs:
             --keychain "$KEYCHAIN_PATH"
 
       - name: build macOS plugin (universal)
+        shell: bash
         run: |
           set -euo pipefail
-          PRODUCT="${{ env.PRODUCT_NAME }}"
-          BASE="${{ env.BASE_DIR }}"
+          PRODUCT="$PRODUCT_NAME"
+          BASE="$BASE_DIR"
           XCODE_PROJECT="${PRODUCT}.xcodeproj"
           XCODE_TARGET="${PRODUCT}"
           PLUGINS_DIR="${BASE}/Plugins"
 
-          echo "Cleaning stale outputs to avoid /Default/ vs / bug"
-          rm -rf "${PLUGINS_DIR}/${PRODUCT}.bundle"
-          rm -rf "${PLUGINS_DIR}/Default"
-          rm -rf "${BASE}/plugins"
-          rm -rf "${PLUGINS_DIR}/${PRODUCT}.build"
+          # Remove only generated metadata, executables, signatures and intermediates.
+          # Keep tracked Resources, QuickLook and Windows payloads in place.
+          for OUTPUT_DIR in "$PLUGINS_DIR" "$PLUGINS_DIR/Default"; do
+            CONTENTS="$OUTPUT_DIR/${PRODUCT}.bundle/Contents"
+            rm -f "$CONTENTS/MacOS/$PRODUCT" "$CONTENTS/Info.plist" \
+              "$CONTENTS/Resources/English.lproj/InfoPlist.strings"
+            rm -rf "$CONTENTS/_CodeSignature" "$OUTPUT_DIR/${PRODUCT}.build"
+          done
+          rm -rf "build/${PRODUCT}.build"
 
           echo "Building $XCODE_PROJECT target $XCODE_TARGET"
           xcodebuild -project "$XCODE_PROJECT" \
@@ -184,49 +196,50 @@ jobs:
             -configuration Default \
             ARCHS="arm64 x86_64" \
             ONLY_ACTIVE_ARCH=NO \
-            MACOSX_DEPLOYMENT_TARGET="${{ env.MACOS_DEPLOYMENT_TARGET }}" \
+            MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET" \
             CODE_SIGNING_ALLOWED=NO \
             CONFIGURATION_BUILD_DIR="$PWD/$PLUGINS_DIR" \
+            OBJROOT="$PWD/build" \
             build
 
           echo "Built:"
           ls -R "$PLUGINS_DIR"
 
       - name: verify universal binary
+        shell: bash
         run: |
           set -euo pipefail
-          PRODUCT="${{ env.PRODUCT_NAME }}"
-          BASE="${{ env.BASE_DIR }}"
+          PRODUCT="$PRODUCT_NAME"
+          BASE="$BASE_DIR"
           BIN="${BASE}/Plugins/${PRODUCT}.bundle/Contents/MacOS/${PRODUCT}"
 
-          if [ ! -f "$BIN" ]; then
-            echo "::error::Expected binary not found at $BIN"
-            ls -R "$BASE"
+          if [ ! -f "$BIN" ] || [ ! -s "$BIN" ]; then
+            echo "::error::Expected nonempty binary not found at $BIN"
             exit 1
           fi
 
-          echo "Timestamp check (must be recent):"
-          ls -lT "$BIN" || ls -l --time-style=full "$BIN"
-
-          lipo -info "$BIN"
-          lipo -info "$BIN" | grep -q "arm64"
-          lipo -info "$BIN" | grep -q "x86_64"
+          ARCHITECTURES="$(lipo -archs "$BIN")"
+          for REQUIRED_ARCH in arm64 x86_64; do
+            case " $ARCHITECTURES " in
+              *" $REQUIRED_ARCH "*) ;;
+              *) echo "::error::Missing required architecture $REQUIRED_ARCH"; exit 1 ;;
+            esac
+          done
+          python3 .github/scripts/version.py verify-built --bundle "${BASE}/Plugins/${PRODUCT}.bundle"
 
       - name: merge Windows binaries into the bundle
+        shell: bash
         run: |
           set -euo pipefail
-          PRODUCT="${{ env.PRODUCT_NAME }}"
-          BASE="${{ env.BASE_DIR }}"
+          PRODUCT="$PRODUCT_NAME"
+          BASE="$BASE_DIR"
           BUNDLE="${BASE}/Plugins/${PRODUCT}.bundle"
 
           mkdir -p "$BUNDLE/Contents/Windows64"
 
-          echo "winbuild contents:"
-          ls -R winbuild || true
-
-          SRC=$(find winbuild -name "${PRODUCT}.4DX" -type f | head -1)
-          if [ -z "$SRC" ]; then
-            echo "::error::Windows binary ${PRODUCT}.4DX not found in winbuild/"
+          SRC="winbuild/${PRODUCT}.4DX"
+          if [ ! -f "$SRC" ] || [ ! -s "$SRC" ]; then
+            echo "::error::Expected nonempty Windows binary not found at $SRC"
             exit 1
           fi
 
@@ -237,6 +250,7 @@ jobs:
           ls -R "$BUNDLE/Contents"
 
       - name: codesign
+        shell: bash
         run: |
           set -euo pipefail
           IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
@@ -252,10 +266,12 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$BUNDLE_PATH"
 
       - name: package, notarize & staple
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          PRODUCT="${{ env.PRODUCT_NAME }}"
-          VERSION="${{ needs.version.outputs.version }}"
+          PRODUCT="$PRODUCT_NAME"
           ZIP_PATH="${PRODUCT}-${VERSION}.zip"
           DMG_PATH="${PRODUCT}-${VERSION}.dmg"
 
@@ -265,8 +281,10 @@ jobs:
           echo "Creating $DMG_PATH"
           hdiutil create -format UDBZ -volname "$PRODUCT" -srcfolder "$BUNDLE_PATH" "$DMG_PATH"
 
-          xcrun notarytool submit "$ZIP_PATH" --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" --wait
-          xcrun notarytool submit "$DMG_PATH" --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" --wait
+          xcrun notarytool submit "$ZIP_PATH" --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" --wait --output-format json > "$PRODUCT-$VERSION-zip-notary.json"
+          python3 -c 'import json, sys; result = json.load(open(sys.argv[1])); sys.exit(0 if result.get("status") == "Accepted" else "ZIP notarization was not Accepted")' "$PRODUCT-$VERSION-zip-notary.json"
+          xcrun notarytool submit "$DMG_PATH" --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" --wait --output-format json > "$PRODUCT-$VERSION-dmg-notary.json"
+          python3 -c 'import json, sys; result = json.load(open(sys.argv[1])); sys.exit(0 if result.get("status") == "Accepted" else "DMG notarization was not Accepted")' "$PRODUCT-$VERSION-dmg-notary.json"
           xcrun stapler staple "$DMG_PATH"
 
           echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
@@ -274,10 +292,10 @@ jobs:
           ls -lh "$ZIP_PATH" "$DMG_PATH"
 
       - name: create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.version.outputs.tag }}
-          name: ${{ needs.version.outputs.tag }}
-          files: |
-            ${{ env.ZIP_PATH }}
-            ${{ env.DMG_PATH }}
+        shell: bash
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release.py publish --tag "$TAG" --sha "$GITHUB_SHA" --asset "$ZIP_PATH" --asset "$DMG_PATH"

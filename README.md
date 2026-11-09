@@ -6,6 +6,9 @@
 # 4d-plugin-maddy
 MD to HTML parser based on [maddy](https://github.com/progsource/maddy)
 
+Manual source-only `Bump` and independent, zero-input `Build` workflows are
+documented in [the release workflow guide](.github/README.md).
+
 ## Similar Projects
 
 |repository|downloads|
