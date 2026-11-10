@@ -9,6 +9,8 @@
  # --------------------------------------------------------------------------------*/
 
 #include "4DPlugin-maddy.h"
+#include <cstdio>
+#include <exception>
 
 #pragma mark -
 
@@ -27,9 +29,13 @@ void PluginMain(PA_long32 selector, PA_PluginParameters params) {
         }
 
 	}
+	catch(const std::exception& error)
+	{
+        std::fprintf(stderr, "maddy: %s\n", error.what());
+	}
 	catch(...)
 	{
-
+        std::fprintf(stderr, "maddy: unknown native exception\n");
 	}
 }
 

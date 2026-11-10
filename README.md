@@ -9,6 +9,9 @@ MD to HTML parser based on [maddy](https://github.com/progsource/maddy)
 Manual source-only `Bump` and independent, zero-input `Build` workflows are
 documented in [the release workflow guide](.github/README.md).
 
+Native string ownership contracts, audit scope, deferred boundaries and the
+unsigned synthetic regression are documented in [the ownership audit](.github/tests/OWNERSHIP.md).
+
 ## Similar Projects
 
 |repository|downloads|

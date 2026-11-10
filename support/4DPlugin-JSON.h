@@ -107,6 +107,7 @@ bool ob_get_a(PA_ObjectRef obj, const wchar_t *_key, CUTF8String *value);
 bool ob_get_b(PA_ObjectRef obj, const wchar_t *_key);
 double ob_get_n(PA_ObjectRef obj, const wchar_t *_key);
 PA_CollectionRef ob_get_c(PA_ObjectRef obj, const wchar_t *_key);
+// Matching object/collection results transfer an owner; callers must dispose it.
 // Object getter: mirrors ob_get_c below (eVK_Collection -> PA_GetCollectionVariable)
 // but for eVK_Object -> PA_GetObjectVariable. Did not exist in this header at all;
 // confirmed missing live in this project's own CI (4DPlugin-xmlsec.cpp): error C3861:
