@@ -1,0 +1,25 @@
+name: Native ownership
+
+on:
+  pull_request:
+    paths:
+      - '4DPlugin-maddy.*'
+      - '4D Plugin API/**'
+      - 'support/**'
+      - 'include/**'
+      - '.github/tests/ownership_host.mm'
+      - '.github/tests/test_ownership.py'
+      - '.github/workflows/ownership.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ownership:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Actual native sources and unchanged SDK under ASan and UBSan
+        run: python3 .github/tests/test_ownership.py
